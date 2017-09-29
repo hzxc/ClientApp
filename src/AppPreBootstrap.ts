@@ -1,8 +1,10 @@
+import * as moment from 'moment';
 import { SubdomainTenancyNameFinder } from '@shared/helpers/SubdomainTenancyNameFinder';
 import { AppConsts } from '@shared/AppConsts';
 import { UrlHelper } from '@shared/helpers/UrlHelper';
 import { AppAuthService } from '@app/shared/common/auth/app-auth.service';
 import { UtilsService } from '@abp/utils/utils.service';
+import { LocalizedResourcesHelper } from './shared/helpers/LocalizedResourcesHelper';
 
 export class AppPreBootstrap{
     static run(callback: () => void): void {
@@ -87,6 +89,50 @@ export class AppPreBootstrap{
             location.search = '';
             callback();
         });
+    }
+
+    private static getUserConfiguration(callback: () => void): JQueryPromise<any> {
+        const cookieLangValue = abp.utils.getCookieValue("Abp.Localization.CultureName");
+        return abp.ajax({
+            url: AppConsts.remoteServiceBaseUrl + '/AbpUserConfiguration/GetAll',
+            method: 'GET',
+            headers: {
+                Authorization: 'Bearer ' + abp.auth.getToken(),
+                '.AspNetCore.Culture': ('c=' + cookieLangValue + '|uic=' + cookieLangValue),
+                'Abp.TenantId': abp.multiTenancy.getTenantIdCookie()
+            }
+        }).done(result => {
+            $.extend(true, abp, result);
+
+            abp.clock.provider = this.getCurrentClockProvider(result.clock.provider);
+
+            moment.locale(abp.localization.currentLanguage.name);
+            (window as any).moment.locale(abp.localization.currentLanguage.name);
+
+            if (abp.clock.provider.supportsMultipleTimezone) {
+                moment.tz.setDefault(abp.timing.timeZoneInfo.iana.timeZoneId);
+                (window as any).moment.tz.setDefault(abp.timing.timeZoneInfo.iana.timeZoneId);
+            }
+
+            abp.event.trigger('abp.dynamicScriptsInitialized');
+
+            AppConsts.recaptchaSiteKey = abp.setting.get("Recaptcha.SiteKey");
+            AppConsts.subscriptionExpireNootifyDayCount = parseInt(abp.setting.get("App.TenantManagement.SubscriptionExpireNotifyDayCount"));
+
+            LocalizedResourcesHelper.loadResources(callback);
+        });
+    }
+
+    private static getCurrentClockProvider(currentProviderName: string): abp.timing.IClockProvider {
+        if (currentProviderName === "unspecifiedClockProvider") {
+            return abp.timing.unspecifiedClockProvider;
+        }
+
+        if (currentProviderName === "utcClockProvider") {
+            return abp.timing.utcClockProvider;
+        }
+
+        return abp.timing.localClockProvider;
     }
 
     private static setEncryptedTokenCookie(encryptedToken: string) {
